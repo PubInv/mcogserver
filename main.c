@@ -1,4 +1,7 @@
+#include <getopt.h>
+
 #include "main.h"
+
 
 int gVERBOSE = 0;
 char *gLOGSTRING = NULL;
@@ -18,14 +21,14 @@ char *gID = NULL;
 int main(int argc, char* argv[]) {
   char opt;
   char *port = gLISTEN_PORT;
-  
-  while ((opt = getopt(argc, argv, "p:v")) != -1) { 
-    switch(opt) { 
+
+  while ((opt = getopt(argc, argv, "p:v")) != -1) {
+    switch(opt) {
     case 'p': port = optarg; break;
     case 'v': gVERBOSE = 1; break;// print output
-    case '?': printf("unknown option: %c\n", optopt); break; 
-    } 
-  } 
+    case '?': printf("unknown option: %c\n", optopt); break;
+    }
+  }
 
   start_server(port);
   exit(0);
@@ -51,7 +54,7 @@ parse_message(int length) {
 
   gID = gURI;
   if (*gID == '/') gID++;
-  if (ptr = strchr(gID, '/')) {
+  if ((ptr = strchr(gID, '/'))) {
     *ptr = '\0';
     gPATH = ptr + 1;
   }
@@ -64,14 +67,14 @@ parse_message(int length) {
     while (*ptr) if (*ptr++ == ':') x++;
     if (x == 5) ok = 1;
   }
-  
+
   if (!ok) {
     gID = "";
     gPATH = gURI;
   }
 
   char *remoteid = ascii_peer();
-    
+
   gLOGSTRING = stracat(gLOGSTRING, "remoteid is ");
   gLOGSTRING = stracat(gLOGSTRING, remoteid);
   gLOGSTRING = stracat(gLOGSTRING, "id is ");
@@ -135,7 +138,7 @@ start_server(const char *port) {
   sem_t *sem;
   sem = mmap(NULL, sizeof sem, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, 0, 0);
   sem_init(sem, 1, 0);
-    
+
   while (1) {
     socklen_t addr_len = sizeof gTHEIR_ADDR;
     if (recvfrom(gLISTENFD, gBUF, sizeof gBUF, MSG_PEEK, (struct sockaddr_in *) &gTHEIR_ADDR, &addr_len) > 0) {
@@ -182,7 +185,7 @@ route() {
     if (recv_params(gID)) sendp("201 New params accepted");
     return;
   }
-  
+
   sendp("UFO");
   return;
 }
@@ -192,14 +195,14 @@ read_connx(int fd) {
   time_t now = time(NULL);
   struct tm *tm = localtime(&now);
   fprintf(stderr, "%d%02d%02d %02d:%02d:%02d ", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
-  
+
   fprintf(stderr, "[%d] ", getpid());
-  
+
   char *ptr = ascii_peer();
   fprintf(stderr, "(%s) ", ptr ? ptr : "no peer!");
-  
+
   int rcvd = recvfrom(fd, gBUF, sizeof gBUF, 0, NULL, NULL);
-  
+
   int clientfd;
   if (rcvd < 0)    // receive error
     fprintf(stderr,("  read/recv error\n"));
@@ -237,7 +240,7 @@ recv_params(char *id) {
     return 0;
   }
   cJSON_Delete(params);
-  
+
   char fname[PATH_MAX];
   snprintf(fname, PATH_MAX, "%s/%s.json", PARAMDIR, id);
 
@@ -276,7 +279,7 @@ recv_params(char *id) {
 int
 send_params(char *id) {
   if (id == NULL || strlen(id) == 0) return 0;
-  
+
   char fname[PATH_MAX];
   snprintf(fname, PATH_MAX, "%s/%s.json", PARAMDIR, id);
   if (fname == NULL) return 0;
@@ -293,7 +296,7 @@ send_params(char *id) {
     sendp("402 - SERVER ERROR");
     return 0;
   }
-    
+
   FILE *fp = fopen(fname, "r");
   if (fp == NULL) {
     if (buffer) free(buffer);
@@ -315,7 +318,7 @@ send_params(char *id) {
     buffer[c] = '\n';
     buffer[c+1] = '\0';
   } else buffer[c] = '\0';
-  
+
   cJSON *params = cJSON_Parse(buffer);
   if (buffer) free(buffer);
   char *new = cJSON_PrintStruct(params, NULL, 1);
@@ -334,7 +337,7 @@ sendp(char *pMessage, ...) {
   char buffer[64 * 1024];
   int c = vsnprintf(buffer, sizeof buffer, pMessage, ap);
   int a = sendto(gLISTENFD, buffer, c, 0, (struct sockaddr_in *) &gTHEIR_ADDR, sizeof(struct sockaddr_in));
-    
+
   va_end(ap);
 
   return;
@@ -374,4 +377,3 @@ stracat(char *dest, char *src) {
   free(dest);
   return new;
 }
-
