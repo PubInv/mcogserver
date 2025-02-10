@@ -1,101 +1,267 @@
-#include <getopt.h>
-
 #include "main.h"
 
+//#define RCV_PARAMS
 
-int gVERBOSE = 0;
-char *gLOGSTRING = NULL;
+#ifdef CUMULOCITY
+int C8Y_RELAY = 1;
+char *C8Y_AUTH = "devman:Th3EdgeWorks!$!";
+char *C8Y_HOST = "https://mcogs.us.cumulocity.com";
+#endif
 
-char *gLISTEN_PORT = "57573";
+// int gVERBOSE = 0;
+// HACK! Trying to understand why I can't read my full file!
+int gVERBOSE = 1;
 
-char gBUF[64 * 1024] = "";
+//char *gLOGSTRING = NULL;
+
+char *gLISTEN_PORT = "57575";
+
 int gLISTENFD;
-struct sockaddr_in gTHEIR_ADDR;
-char *gPAYLOAD = NULL;
-int gPAYLOAD_SIZE = 0;
-char *gMETHOD = NULL;
-char *gURI = NULL;
-char *gPATH = NULL;
-char *gID = NULL;
+
+sem_t *gSEM;
 
 int main(int argc, char* argv[]) {
   char opt;
   char *port = gLISTEN_PORT;
-
-  while ((opt = getopt(argc, argv, "p:v")) != -1) {
-    switch(opt) {
+  
+  while ((opt = getopt(argc, argv, "p:v")) != -1) { 
+    switch(opt) { 
     case 'p': port = optarg; break;
     case 'v': gVERBOSE = 1; break;// print output
-    case '?': printf("unknown option: %c\n", optopt); break;
-    }
-  }
+    case '?': printf("unknown option: %c\n", optopt); break; 
+    } 
+  } 
 
   start_server(port);
   exit(0);
 }
 
+int
+send_params(char *id, char *type, struct sockaddr_in their_addr) {
+  if (id == NULL || strlen(id) == 0) return 0;
+  
+  char fname[PATH_MAX];
+  if (type) snprintf(fname, PATH_MAX, "%s/%s-%s.json", PARAMDIR, id, type);
+  else snprintf(fname, PATH_MAX, "%s/%s.json", PARAMDIR, id);
+  if (fname == NULL) return 0;
+
+  struct stat sb;
+  if (stat(fname, &sb) < 0) {
+    sendp(their_addr, "401 - NO PARAMS");
+    return 0;
+  }
+
+  char *buffer = malloc(sb.st_size + 1);
+  if (buffer == NULL) {
+    if (gVERBOSE) fprintf(stderr, "can't malloc(%ld) for conf %s\n", sb.st_size, fname);
+    sendp(their_addr, "402 - SERVER ERROR");
+    return 0;
+  }
+    
+  FILE *fp = fopen(fname, "r");
+  if (fp == NULL) {
+    if (buffer) free(buffer);
+    sendp(their_addr, "402 - FILE ERROR");
+    return 0;
+  }
+
+  size_t c = fread(buffer, 1, sb.st_size, fp);
+  if (c != sb.st_size) {
+    if (gVERBOSE) fprintf(stderr, "short read %lu not %lu on %s\n", c, sb.st_size, fname);
+    if (buffer) free(buffer);
+    fclose(fp);
+    sendp(their_addr, "402 - FILE ERROR");
+    return 0;
+  }
+  fclose(fp);
+
+  if (buffer[c-1] != '\n') {
+    buffer[c] = '\n';
+    buffer[c+1] = '\0';
+  } else buffer[c] = '\0';
+  
+  char *startptr = buffer;
+  if (strncmp(buffer, "{ \"C8YSID\": ", 12) == 0) {
+    startptr = strchr(buffer, '\n');
+    startptr++;
+  }
+
+  cJSON *params = cJSON_Parse(startptr);
+  if (buffer) free(buffer);
+
+  char *new = FlattenJSON(params, "States", 1);
+  new = stracat(new, "\n");
+  cJSON_Delete(params);
+
+  sendto(gLISTENFD, new, strlen(new), 0, (struct sockaddr_in *) &their_addr, sizeof(struct sockaddr_in));
+
+  fprintf(stderr,"HERE IS THE PARASED FILE:\n%s", new);
+  if (new) free(new);
+  return 1;
+}
+
+struct uri_struct {
+  char *method;
+  char *path;
+  char *id;
+  char *type;
+};
+
 void
-parse_message(int length) {
-  char *ptr = gBUF;
-
-  gPAYLOAD = strpbrk(ptr, "\r\n");
-  *gPAYLOAD++ = '\0';
-  while (*gPAYLOAD == '\r' || *gPAYLOAD == '\n') gPAYLOAD++;
-  gPAYLOAD_SIZE = strlen(gPAYLOAD);
-
-  gMETHOD = strtok_r(gBUF,  " ", &ptr);
-
-  gURI = strtok_r(NULL, " ", &ptr);
-  if (gVERBOSE) fprintf(stderr, "\x1b[32m + [%s] %s\x1b[0m\n", gMETHOD, gURI ? gURI : "EMPTY");
-  if (gURI == NULL) {
-    sendp("BAD");
+route(struct uri_struct uri, char *payload, struct sockaddr_in their_addr) {
+  if (strcmp(uri.method, "GET") == 0 && strcasecmp(uri.path, "checktest") == 0) {
+    for(int i = 1; i < 600; i++) {
+      char msg[20];
+      fprintf(stderr, "send %d\n", i);
+      sprintf(msg, "CheckTest %d\n", i*90);
+      sendp(their_addr, msg);
+      sleep(90);
+    }
     return;
   }
 
-  gID = gURI;
-  if (*gID == '/') gID++;
-  if ((ptr = strchr(gID, '/'))) {
+  if (strcmp(uri.method, "GET") == 0 && strcasecmp(uri.path, "params") == 0) {
+    send_params(uri.id, uri.type, their_addr);
+    return;
+  }
+
+  if (strcmp(uri.method, "POST") == 0 && strcasecmp(uri.path, "/testpost") == 0) {
+    sendp(their_addr, "testpost\n");
+    return;
+  }
+
+#ifdef RCV_PARAMS
+  if ((strcmp(uri.method, "PUT") == 0  || strcmp(uri.method, "POST") == 0) && strcasecmp(uri.path, "params") == 0) {
+    fprintf(stderr, "%s param data is (%d) %s\n", uri.method, strlen(payload), payload);
+    if (recv_params(uri.id)) sendp(their_addr, "201 New params accepted");
+    return;
+  }
+#endif
+  
+  if (strcmp(uri.method, "POST") == 0 || strcmp(uri.method, "PUT") == 0) {
+    sem_wait(gSEM);
+    fprintf(stderr, "POST data is %s\n", payload);
+    char fname[PATH_MAX];
+    if (uri.type) snprintf(fname, sizeof fname, "DATA/%s-%s", uri.id, uri.type);
+    else snprintf(fname, sizeof fname, "DATA/%s", uri.id);
+
+    FILE *fp = fopen(fname, "a");
+    if (fp == NULL) {
+      sendp(their_addr, "402 post failed - file error");
+      return;
+    }
+    fprintf(fp, "%s\n", payload);
+    fclose(fp);
+    sem_post(gSEM);
+
+#ifdef CUMULOCITY
+    int r = relay_data(uri.id, payload, uri.type, 0);
+#endif
+    sendp(their_addr, "posted");
+    return;
+  }
+
+  sendp(their_addr, "UFO");
+  return;
+}
+
+void
+handle_message(int rcvd, char *buffer, struct sockaddr_in their_addr) {
+  time_t now = time(NULL);
+  struct tm *tm = localtime(&now);
+  fprintf(stderr, "%d/%02d/%02d %02d:%02d:%02d ", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+  
+  //  fprintf(stderr, "[%d] ", getpid());
+  
+  char remoteid[INET6_ADDRSTRLEN] = "";
+  struct in_addr addr = ((struct sockaddr_in *) & their_addr)->sin_addr;
+  if (!inet_ntop(AF_INET, &addr, remoteid, INET6_ADDRSTRLEN))
+    strcpy(remoteid, "NO ADDR");
+
+  fprintf(stderr, "(%s) ", remoteid ? remoteid : "no peer!");
+  
+  fprintf(stderr, " [%d] ", rcvd);
+
+  char *ptr = buffer;
+
+  char *payload = strpbrk(ptr, "\r\n");
+  if (payload) {
+    *payload++ = '\0';
+    while (*payload == '\r' || *payload == '\n') payload++;
+  }
+
+  struct uri_struct uri;
+
+  uri.method = strtok_r(buffer,  " ", &ptr);
+
+  char *uriL = strtok_r(NULL, " ", &ptr);
+  if (gVERBOSE) fprintf(stderr, "\x1b[32m + [%s] %s\x1b[0m\n", uri.method, uriL ? uriL : "EMPTY");
+  if (uriL == NULL) {
+    sendp(their_addr, "BAD URI");
+    return;
+  }
+
+  uri.id = uriL;
+  if (*uri.id == '/') uri.id++;
+  if (ptr = strchr(uri.id, '/')) {
     *ptr = '\0';
-    gPATH = ptr + 1;
+    uri.path = ptr + 1;
   }
 
   int ok = 0;
-  if ((strlen(gID) == 15 || strlen(gID) == 17) && strspn(gID, "1234567890") == strlen(gID)) ok = 1;
-  else if (strlen(gID) == 17) {
+  if ((strlen(uri.id) == 15 || strlen(uri.id) == 17) && strspn(uri.id, "1234567890") == strlen(uri.id)) ok = 1;
+  else if (strlen(uri.id) == 17) {
     int x = 0;
-    char *ptr = gID;
+    char *ptr = uri.id;
     while (*ptr) if (*ptr++ == ':') x++;
     if (x == 5) ok = 1;
   }
-
+  
   if (!ok) {
-    gID = "";
-    gPATH = gURI;
+    uri.id = "";
+    uri.path = uriL;
   }
 
-  char *remoteid = ascii_peer();
+  char *type;
+  if (ptr = strchr(uri.path, '/')) {
+    *ptr = '\0';
+    uri.type = uri.path;
+    uri.path = ptr + 1;
+  }
 
+  if (!uri.type || strlen(uri.type) == 0) {
+    sendp(their_addr, "BAD type endpoint");
+    return;
+  }
+
+  if (uri.type && strcasecmp(uri.type, "ODECS") == 0) uri.type = "OEDCS";
+
+#if 0
   gLOGSTRING = stracat(gLOGSTRING, "remoteid is ");
   gLOGSTRING = stracat(gLOGSTRING, remoteid);
   gLOGSTRING = stracat(gLOGSTRING, "id is ");
-  gLOGSTRING = stracat(gLOGSTRING, gID);
-  if (gPATH && strlen(gPATH)) {
+  gLOGSTRING = stracat(gLOGSTRING, uri.id);
+  if (uri.path && strlen(uri.path)) {
     gLOGSTRING = stracat(gLOGSTRING, " path is ");
-    gLOGSTRING = stracat(gLOGSTRING, gPATH);
+    gLOGSTRING = stracat(gLOGSTRING, uri.path);
   } else gLOGSTRING = stracat(gLOGSTRING, " empty path ");
-  if (gPAYLOAD && strlen(gPAYLOAD)) {
+  if (payload && strlen(payload)) {
     gLOGSTRING = stracat(gLOGSTRING, " payload is ");
-    gLOGSTRING = stracat(gLOGSTRING, gPAYLOAD);
+    gLOGSTRING = stracat(gLOGSTRING, payload);
   } else gLOGSTRING = stracat(gLOGSTRING, " empty payload ");
-  if (gVERBOSE) {
+#endif
+  
+  if (gVERBOSE || 1) {
     fprintf(stderr, "remoteid is %s; ", remoteid);
-    fprintf(stderr, "id is %s; ", gID);
-    if (gPATH && strlen(gPATH)) fprintf(stderr, "path is %s; ", gPATH);
+    fprintf(stderr, "id is %s; ", uri.id);
+    if (uri.path && strlen(uri.path)) fprintf(stderr, "path is %s ", uri.path);
     else fprintf(stderr, "empty path; ");
-    if (gPAYLOAD && strlen(gPAYLOAD)) fprintf(stderr, "payload is %s;", gPAYLOAD);
+    if (payload && strlen(payload)) fprintf(stderr, "payload is %s", payload);
     else fprintf(stderr, "no payload; ");
     fprintf(stderr, "\n");
   }
+
+  route(uri, payload, their_addr);
 }
 
 void
@@ -135,112 +301,49 @@ start_server(const char *port) {
   // Ignore SIGCHLD to avoid zombie threads
   signal(SIGCHLD,SIG_IGN);
 
-  sem_t *sem;
-  sem = mmap(NULL, sizeof sem, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, 0, 0);
-  sem_init(sem, 1, 0);
-
+  gSEM = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, 0, 0);
+  sem_init(gSEM, 1, 1);
+    
   while (1) {
-    socklen_t addr_len = sizeof gTHEIR_ADDR;
-    if (recvfrom(gLISTENFD, gBUF, sizeof gBUF, MSG_PEEK, (struct sockaddr_in *) &gTHEIR_ADDR, &addr_len) > 0) {
-      if (fork() == 0) {
-	int rcvd = read_connx(gLISTENFD);
-	if (rcvd) {
-	  sem_post(sem);
-	  parse_message(rcvd);
-	  route();
-	}
-	exit(0);
-      }
+    struct sockaddr_in their_addr;
+    socklen_t addr_len = sizeof their_addr;
+    char buffer[64*1024];
+    int rcvd = recvfrom(gLISTENFD, buffer, sizeof buffer, 0, &their_addr, &addr_len);
+    if (rcvd < 0) {
+      fprintf(stderr,("  read/recv error\n"));
+      continue;
     }
-    sem_wait(sem);
+    if (rcvd == 0) {      // receive socket closed
+      fprintf(stderr,"   Client disconnected upexpectedly.\n");
+      continue;
+    }
+
+    buffer[rcvd] = '\0';
+
+    switch(fork()) {
+    case 0: // child
+      handle_message(rcvd, buffer, their_addr);
+      exit(0);
+    case -1: //failed
+    default: //parent
+    }
   }
 }
 
-void
-route() {
-  if (strcmp(gMETHOD, "GET") == 0 && strcasecmp(gPATH, "/checktest") == 0) {
-    sendp("checktest\n");
-    return;
-  }
-
-  if (strcmp(gMETHOD, "GET") == 0 && strcasecmp(gPATH, "params") == 0) {
-    send_params(gID);
-    return;
-  }
-
-  if (strcmp(gMETHOD, "POST") == 0 && strcasecmp(gPATH, "/testpost") == 0) {
-    sendp("testpost\n");
-    return;
-  }
-
-  if (strcmp(gMETHOD, "POST") == 0) {
-    fprintf(stderr, "POST data is %s\n", gPAYLOAD);
-    sendp("posted");
-    return;
-  }
-
-  if ((strcmp(gMETHOD, "PUT") == 0  || strcmp(gMETHOD, "POST") == 0) &&
-      strcasecmp(gPATH, "params") == 0) {
-    fprintf(stderr, "%s param data is (%d) %s\n", gMETHOD, gPAYLOAD_SIZE, gPAYLOAD);
-    if (recv_params(gID)) sendp("201 New params accepted");
-    return;
-  }
-
-  sendp("UFO");
-  return;
-}
-
+#ifdef RCV_PARAMS
 int
-read_connx(int fd) {
-  time_t now = time(NULL);
-  struct tm *tm = localtime(&now);
-  fprintf(stderr, "%d%02d%02d %02d:%02d:%02d ", tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
-
-  fprintf(stderr, "[%d] ", getpid());
-
-  char *ptr = ascii_peer();
-  fprintf(stderr, "(%s) ", ptr ? ptr : "no peer!");
-
-  int rcvd = recvfrom(fd, gBUF, sizeof gBUF, 0, NULL, NULL);
-
-  int clientfd;
-  if (rcvd < 0)    // receive error
-    fprintf(stderr,("  read/recv error\n"));
-  else if (rcvd == 0)    // receive socket closed
-    fprintf(stderr,"   Client disconnected upexpectedly.\n");
-  else {   // message received
-    gBUF[rcvd+1] = '\0';
-  }
-  fprintf(stderr, " [%d] ", rcvd);
-  return rcvd;
-}
-
-char *
-ascii_peer() {
-  static char abuf[INET6_ADDRSTRLEN] = "";
-  //  if (gTHEIR_ADDR.ss_family == AF_INET) {
-    struct in_addr addr = ((struct sockaddr_in *)&gTHEIR_ADDR)->sin_addr;
-    if (!inet_ntop(AF_INET, &addr, abuf, INET6_ADDRSTRLEN)) strcpy(abuf, "NO ADDR");
-    //  } else if (gTHEIR_ADDR.ss_family == AF_INET6) {
-    //    struct in6_addr addr6 = ((struct sockaddr_in6 *)&gTHEIR_ADDR)->sin6_addr;
-    //    if (!inet_ntop(AF_INET6, &addr6, abuf, INET6_ADDRSTRLEN)) strcpy(abuf, "NO ADDR");
-    //  }
-  return abuf;
-}
-
-int
-recv_params(char *id) {
+recv_params(struct sockaddr_in their_addr, char *id, char *payload) {
   if (id == NULL || strlen(id) == 0) return 0;
 
-  if (gPAYLOAD == NULL || strlen(gPAYLOAD) == 0) return 0;
+  if (payload == NULL || strlen(payload) == 0) return 0;
 
-  cJSON *params = cJSON_Parse(gPAYLOAD);
+  cJSON *params = cJSON_Parse(payload);
   if (params == NULL) {
-    sendp("500 - Bad json");
+    sendp(their_addr, "500 - Bad json");
     return 0;
   }
   cJSON_Delete(params);
-
+  
   char fname[PATH_MAX];
   snprintf(fname, PATH_MAX, "%s/%s.json", PARAMDIR, id);
 
@@ -252,94 +355,159 @@ recv_params(char *id) {
       snprintf(newfile, PATH_MAX, "%s/%s.json.%ld", PARAMDIR, id, now);
     } while (stat(newfile, &sb) == 0);
     if (rename(fname, newfile)) {
-      sendp("500 - server error");
+      sendp(their_addr, "500 - server error");
       return 0;
     }
   }
 
   FILE *fp = fopen(fname, "w");
   if (fp == NULL) {
-    sendp("502 - FILE ERROR");
+    sendp(their_addr, "502 - FILE ERROR");
     rename(newfile, fname);
     return 0;
   }
 
-  size_t c = fwrite(gPAYLOAD, 1, gPAYLOAD_SIZE, fp);
-  if (c != gPAYLOAD_SIZE) {
-    if (gVERBOSE) fprintf(stderr, "short write %lu not %u on %s\n", c, gPAYLOAD_SIZE, fname);
+  size_t c = fwrite(payload, 1, payload_size, fp);
+  if (c != payload_size) {
+    if (gVERBOSE) fprintf(stderr, "short write %lu not %u on %s\n", c, payload_size, fname);
     fclose(fp);
     rename(newfile, fname);
-    sendp("502 - FILE ERROR");
+    sendp(their_addr, "502 - FILE ERROR");
     return 0;
   }
   fclose(fp);
   return 1;
 }
+#endif
 
-int
-send_params(char *id) {
-  if (id == NULL || strlen(id) == 0) return 0;
+char *
+FlattenJSON(cJSON *item, char *label, int values) {
+  static int level = 0;
+  static char *outbuffer = NULL;
+  static char *prefix = NULL;
 
-  char fname[PATH_MAX];
-  snprintf(fname, PATH_MAX, "%s/%s.json", PARAMDIR, id);
-  if (fname == NULL) return 0;
+  int element_count = 0;
 
-  struct stat sb;
-  if (stat(fname, &sb) < 0) {
-    sendp("401 - NO PARAMS");
-    return 0;
+  if (level == 0) {
+    if (outbuffer) free(outbuffer);
+    outbuffer = NULL;
   }
 
-  char *buffer = malloc(sb.st_size + 1);
-  if (buffer == NULL) {
-    if (gVERBOSE) fprintf(stderr, "can't malloc(%ld) for conf %s\n", sb.st_size, fname);
-    sendp("402 - SERVER ERROR");
-    return 0;
+  char *tmp = NULL;
+  switch ((item->type) & 0xFF) {
+  case cJSON_NULL: tmp = strdup("NULL"); break;
+  case cJSON_False: tmp = strdup("FALSE"); break;
+  case cJSON_True: tmp = strdup("TRUE"); break;
+
+  case cJSON_Number:
+    double d = item->valuedouble;
+    if (isnan(d) || isinf(d))  tmp = strdup("INVNUM");
+    else {
+      char dtemp[50];
+      snprintf(dtemp, sizeof dtemp, "%1.15g", d);
+      tmp = strdup(dtemp);
+    }
+    break;
+
+  case cJSON_Raw:
+    if (item->valuestring == NULL) tmp = strdup("RAWNULL");
+    else tmp = strdup(item->valuestring);
+    break;
+
+  case cJSON_String:
+    tmp = strdup(item->valuestring);
+    break;
+
+  case cJSON_Array:
+    cJSON *current_element = item->child;
+    while (current_element) {
+      element_count++;
+      int olen = 0; if (outbuffer) olen = strlen(outbuffer);
+      if (olen) {
+	outbuffer = realloc(outbuffer, olen + 10);
+	//	char n[50]; snprintf(n, sizeof n, "%d", level);
+	//	strcat(outbuffer, n);
+	if (level == 1) strcat(outbuffer, "[");
+	strcat(outbuffer, "[");
+	strcat(outbuffer, " ");
+      }
+      level++;
+      FlattenJSON(current_element, label, values);
+      level--;
+      if (current_element->next) {
+        int olen = 0; if (outbuffer) olen = strlen(outbuffer);
+	outbuffer = realloc(outbuffer, olen + 3);
+	strcat(outbuffer, "\n");
+      } 
+      current_element = current_element->next;
+    }
+    break;
+
+  case cJSON_Object:
+    cJSON *current_object = item->child;
+    while (current_object) {
+      if (current_object->string && strcasecmp(current_object->string, label)) {
+	if (!prefix) {
+	  prefix = malloc(strlen(current_object->string) + 2);
+	  strcpy(prefix, "");
+	} else
+	  prefix = realloc(prefix, strlen(prefix) + 1 + strlen(current_object->string) + 2);
+	strcat(prefix, current_object->string);
+	strcat(prefix, ".");
+      }
+      level++;
+      FlattenJSON(current_object, label, values);
+      level--;
+      char *ptr = strrchr(prefix, '.');
+      if (ptr) *ptr = '\0';
+      ptr = strrchr(prefix, '.');
+      if (ptr) *++ptr = '\0';
+      else strcpy(prefix, "");
+      if (current_object->next) {
+	int olen = 0; if (outbuffer) olen = strlen(outbuffer);
+	outbuffer = realloc(outbuffer, olen + 5);
+	strcat(outbuffer, "\n");
+      }
+      current_object = current_object->next;
+    }
+    break;
   }
 
-  FILE *fp = fopen(fname, "r");
-  if (fp == NULL) {
-    if (buffer) free(buffer);
-    sendp("402 - FILE ERROR");
-    return 0;
+  if (tmp) {
+    int olen = 0;
+    if (outbuffer) olen = strlen(outbuffer);
+    int plen = 0;
+    if (prefix) plen = strlen(prefix);
+    int tlen = 0; if (tmp) tlen = strlen(tmp);
+    if (!outbuffer) {
+      outbuffer = malloc(plen + 1 + tlen + 5);
+      strcpy(outbuffer, "");
+    } else
+      outbuffer = realloc(outbuffer, olen + 1 + plen + 1 + tlen + 5);
+    if (plen) {
+      strcat(outbuffer, prefix);
+      strcat(outbuffer, " ");
+    }
+    if (tlen && values) strcat(outbuffer, tmp);
+    if (tmp) free(tmp);
   }
-
-  size_t c = fread(buffer, 1, sb.st_size, fp);
-  if (c != sb.st_size) {
-    if (gVERBOSE) fprintf(stderr, "short read %lu not %lu on %s\n", c, sb.st_size, fname);
-    if (buffer) free(buffer);
-    fclose(fp);
-    sendp("402 - FILE ERROR");
-    return 0;
+  if (level == 0) {
+    if (outbuffer) return strdup(outbuffer);
+    return strdup("");
   }
-  fclose(fp);
-
-  if (buffer[c-1] != '\n') {
-    buffer[c] = '\n';
-    buffer[c+1] = '\0';
-  } else buffer[c] = '\0';
-
-  cJSON *params = cJSON_Parse(buffer);
-  if (buffer) free(buffer);
-  char *new = cJSON_PrintStruct(params, NULL, 1);
-  new = stracat(new, "\n");
-  cJSON_Delete(params);
-  sendto(gLISTENFD, new, strlen(new), 0, (struct sockaddr_in *) &gTHEIR_ADDR, sizeof(struct sockaddr_in));
-  if (new) free(new);
-  return 1;
 }
 
 void
-sendp(char *pMessage, ...) {
+sendp(struct sockaddr_in their_addr, char *pMessage, ...) {
   va_list ap;
   va_start(ap, pMessage);
 
   char buffer[64 * 1024];
   int c = vsnprintf(buffer, sizeof buffer, pMessage, ap);
-  int a = sendto(gLISTENFD, buffer, c, 0, (struct sockaddr_in *) &gTHEIR_ADDR, sizeof(struct sockaddr_in));
-
+  int a = sendto(gLISTENFD, buffer, c, 0, (struct sockaddr_in *) &their_addr, sizeof(struct sockaddr_in));
+    
   va_end(ap);
-
+  
   return;
 }
 
@@ -377,3 +545,4 @@ stracat(char *dest, char *src) {
   free(dest);
   return new;
 }
+
