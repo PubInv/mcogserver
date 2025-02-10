@@ -1,10 +1,5 @@
 #include "local.h"
 
-#ifdef CUMULOCITY
-int C8Y_RELAY = 1;
-char *C8Y_AUTH = "devman:Th3EdgeWorks!$!";
-char *C8Y_HOST = "https://mcogs.us.cumulocity.com";
-#endif
 
 // int gVERBOSE = 0;
 // HACK! Trying to understand why I can't read my full file!

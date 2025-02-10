@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include "cJSON/cJSON.h"
+#include "secrets.h"
 
 void start_reader(char *mac, char *type);
 

@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include "cJSON/cJSON.h"
+#include "secrets.h"
 
 //#define DATADIR "DATA"
 //#define PARAMDIR "/home/geoff/iotserver/params/DATA"
