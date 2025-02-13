@@ -11,8 +11,15 @@ On Geoffs server, this is treated as a service that can be restarted with:
 
 Setup
 
+clone the repo
+
+make sure to init the submodules
+git submodule init
+git submodule update
+
 #environmental setup
 sudo apt install -y  build-essential git libssl-dev
+
 
 
 #install the local mcogserver
