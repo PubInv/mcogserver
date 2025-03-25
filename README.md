@@ -15,8 +15,15 @@ iotserver is the process that automatically uploads to cumulocity and saves to d
 
 Setup
 
+clone the repo
+
+make sure to init the submodules
+git submodule init
+git submodule update
+
 #environmental setup
 sudo apt install -y  build-essential git libssl-dev
+
 
 
 #install the local mcogserver
