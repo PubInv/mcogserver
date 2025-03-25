@@ -9,6 +9,10 @@ On Geoffs server, this is treated as a service that can be restarted with:
 > sudo systemctl start mcogs.service
 ```
 
+Local is for manually uploading the logs on the server. given a mac address 
+
+iotserver is the process that automatically uploads to cumulocity and saves to disk. 
+
 Setup
 
 #environmental setup
