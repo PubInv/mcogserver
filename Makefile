@@ -1,5 +1,5 @@
-OBJ =  main.o cJSON/cJSON.o cumulocity.o
-OBJ1 = local.o cJSON/cJSON.o cumulocity.o
+OBJ =  main.o cJSON/cJSON.o cumulocity.o config.o
+OBJ1 = local.o cJSON/cJSON.o cumulocity.o config.o
 CC = gcc
 
 iotserver: ${OBJ} main.h
