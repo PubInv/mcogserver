@@ -10,17 +10,18 @@
 //#include <openssl/err.h>
 #include <unistd.h>
 #include <errno.h>
-#include "main.h"
+#include "secrets.h"
 
+#include "main.h"
 #define sendproperties
 
 // Celsius °C
 // Fahrenheit °F
 
-extern int C8Y_RELAY;
-extern char *C8Y_AUTH;
-extern char *C8Y_HOST;
-extern char *gPAYLOAD;
+//extern int C8Y_RELAY;
+//extern char *C8Y_AUTH;
+//extern char *C8Y_HOST;
+//extern char *gPAYLOAD;
 
 static int create_socket(char *hostname, int port);
 static int is_ssl(char *url);

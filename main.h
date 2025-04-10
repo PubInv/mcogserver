@@ -1,3 +1,6 @@
+#ifndef MAIN_H_
+#define MAIN_H_
+
 #define CUMULOCITY
 
 #define _GNU_SOURCE
@@ -40,3 +43,4 @@ int relay_data();
 
 extern int gVERBOSE;
 extern int gLISTENFD;
+#endif

@@ -1,11 +1,13 @@
+
+#include "secrets.h"
 #include "main.h"
 
 //#define RCV_PARAMS
 
-extern int C8Y_RELAY;
-extern char *C8Y_AUTH;
-extern char *C8Y_HOST;
-extern char *gPAYLOAD;
+//extern int C8Y_RELAY;
+//extern char *C8Y_AUTH;
+//extern char *C8Y_HOST;
+//extern char *gPAYLOAD;
 // int gVERBOSE = 0;
 // HACK! Trying to understand why I can't read my full file!
 int gVERBOSE = 1;
