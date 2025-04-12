@@ -1,0 +1,11 @@
+[Unit]
+Description=mcogserver startup service
+
+[Service]
+User=root
+WorkingDirectory=/www
+ExecStart=/usr/local/bin/iotserver
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
