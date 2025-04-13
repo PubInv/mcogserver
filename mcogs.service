@@ -3,7 +3,7 @@ Description=mcogserver startup service
 
 [Service]
 User=root
-WorkingDirectory=/www
+WorkingDirectory=/var/www/mcogs
 ExecStart=/usr/local/bin/iotserver
 Restart=always
 
