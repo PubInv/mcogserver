@@ -1,7 +1,7 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
-#define CUMULOCITY
+//#define CUMULOCITY
 
 #define _GNU_SOURCE
 #include <errno.h>
